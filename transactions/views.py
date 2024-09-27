@@ -2,19 +2,25 @@ from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.urls import reverse_lazy
 from django.utils import timezone
+from django.contrib.auth.models import User
 from django.shortcuts import get_object_or_404, redirect
 from django.views import View
 from django.http import HttpResponse
-from django.views.generic import CreateView, ListView
+from django.views.generic import CreateView, ListView, FormView
+from .models import UserBankAccount
 from transactions.constants import DEPOSIT, WITHDRAWAL,LOAN, LOAN_PAID
 from django.core.mail import EmailMessage, EmailMultiAlternatives
 from django.template.loader import render_to_string
+from django.core.mail import send_mail
+from django.contrib import messages
+from django.conf import settings 
 from datetime import datetime
 from django.db.models import Sum
 from transactions.forms import (
     DepositForm,
     WithdrawForm,
     LoanRequestForm,
+    TransferForm
 )
 from transactions.models import Transaction
 
@@ -79,7 +85,7 @@ class DepositMoneyView(TransactionCreateMixin):
         send_transaction_email(self.request.user, amount, "Deposite Message", "transactions/deposit_email.html")
 
         return super().form_valid(form)
-
+    
 
 class WithdrawMoneyView(TransactionCreateMixin):
     form_class = WithdrawForm
@@ -91,10 +97,18 @@ class WithdrawMoneyView(TransactionCreateMixin):
 
     def form_valid(self, form):
         amount = form.cleaned_data.get('amount')
+        current_balance = self.request.user.account.balance
 
-        self.request.user.account.balance -= form.cleaned_data.get('amount')
-        # balance = 300
-        # amount = 5000
+        if amount > current_balance:
+            # If the amount to withdraw is more than the available balance
+            messages.error(
+                self.request,
+                'Unable to process the transaction. The bank is bankrupt!'
+            )
+            return self.form_invalid(form)  # Prevent form submission if funds are insufficient
+
+        # Otherwise, proceed with the withdrawal
+        self.request.user.account.balance -= amount
         self.request.user.account.save(update_fields=['balance'])
 
         messages.success(
@@ -105,6 +119,7 @@ class WithdrawMoneyView(TransactionCreateMixin):
         send_transaction_email(self.request.user, amount, "Withdrawal Message", "transactions/withdrawal_email.html")
 
         return super().form_valid(form)
+
 
 class LoanRequestView(TransactionCreateMixin):
     form_class = LoanRequestForm
@@ -198,4 +213,74 @@ class LoanListView(LoginRequiredMixin,ListView):
         user_account = self.request.user.account
         queryset = Transaction.objects.filter(account=user_account,transaction_type=3)
         print(queryset)
-        return queryset
+        return queryset 
+
+
+# class TransferMoneyView(TransactionCreateMixin):
+#     form_class = TransferForm
+#     template_name = 'transactions/transaction_form.html'
+#     title = 'Transfer Money'
+#     success_url = reverse_lazy('transaction_report')
+
+#     def get_form_kwargs(self):
+#         kwargs = super().get_form_kwargs()
+#         kwargs['account'] = self.request.user.account  
+#         return kwargs
+
+#     def form_valid(self, form):
+#         messages.success(self.request, f"Successfully transferred {form.cleaned_data['amount']} to {form.cleaned_data['recipient_username']}.")
+#         return super().form_valid(form)
+
+#     def form_invalid(self, form):
+#         messages.error(self.request, "Transfer failed. Please check your details.")
+#         return super().form_invalid(form)
+        
+
+
+class TransferMoneyView(TransactionCreateMixin):
+    form_class = TransferForm
+    template_name = 'transactions/transaction_form.html'
+    title = 'Transfer Money'
+    success_url = reverse_lazy('transaction_report')
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs['account'] = self.request.user.account  
+        return kwargs
+
+    def form_valid(self, form):
+        
+        sender = self.request.user
+        receiver_username = form.cleaned_data['recipient_username']
+        receiver = User.objects.get(username=receiver_username)
+        
+        self.send_email_transaction(sender, receiver, form.cleaned_data['amount'])
+        
+        messages.success(self.request, f"Successfully transferred {form.cleaned_data['amount']} to {receiver_username}.")
+        return super().form_valid(form)
+
+    def form_invalid(self, form):
+        messages.error(self.request, "Transfer failed. Please check your details.")
+        return super().form_invalid(form)
+
+    
+    def send_email_transaction(self, sender, receiver, amount):
+        subject = 'Money Transfer Notification'
+        
+    
+        send_mail(
+            subject,
+            f'You have successfully transferred {amount}$ to {receiver.username}.',
+            settings.EMAIL_HOST_USER,  
+            [sender.email],  
+            fail_silently=False,
+        )
+        
+       
+        send_mail(
+            subject,
+            f'You have received {amount}$ from {sender.username}.',
+            settings.EMAIL_HOST_USER, 
+            [receiver.email], 
+            fail_silently=False,
+        )

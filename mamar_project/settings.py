@@ -133,4 +133,5 @@ EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_USE_TLS = True
 EMAIL_PORT = 587
 EMAIL_HOST_USER = 'rukaiyazaman9999@gmail.com'
+DEFAULT_FROM_EMAIL = 'maishaislamm30@example.com'
 EMAIL_HOST_PASSWORD = 'qbex hsva hdtl cupy'
